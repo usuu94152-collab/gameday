@@ -484,10 +484,10 @@ export default function App() {
 
   useEffect(() => {
     async function load() {
-      try { const r = await window.storage.get("simple:anchors"); if (r) setAnchors(JSON.parse(r.value)); } catch {}
-      try { const r = await window.storage.get("simple:daily");   if (r) setDaily(JSON.parse(r.value)); }   catch {}
-      try { const r = await window.storage.get(`simple:checked:${today}`); if (r) setChecked(JSON.parse(r.value)); } catch {}
-      try { const r = await window.storage.get("simple:history"); if (r) setHistory(JSON.parse(r.value)); } catch {}
+      try { const r = localStorage.getItem("simple:anchors"); if (r) setAnchors(JSON.parse(r)); } catch {}
+      try { const r = localStorage.getItem("simple:daily");   if (r) setDaily(JSON.parse(r)); }   catch {}
+      try { const r = localStorage.getItem(`simple:checked:${today}`); if (r) setChecked(JSON.parse(r)); } catch {}
+      try { const r = localStorage.getItem("simple:history"); if (r) setHistory(JSON.parse(r)); } catch {}
       setTimeout(() => setLoaded(true), 80);
     }
     load();
@@ -495,12 +495,12 @@ export default function App() {
 
   async function persist(newChecked, newAnchors = anchors, newDaily = daily) {
     try {
-      await window.storage.set(`simple:checked:${today}`, JSON.stringify(newChecked));
+      localStorage.setItem(`simple:checked:${today}`, JSON.stringify(newChecked));
       const total = calcScore(newChecked, newAnchors, newDaily);
       const hist = [...history.filter(h => h.date !== today), { date: today, total }]
         .sort((a,b) => a.date.localeCompare(b.date));
       setHistory(hist);
-      await window.storage.set("simple:history", JSON.stringify(hist));
+      localStorage.setItem("simple:history", JSON.stringify(hist));
     } catch {}
   }
 
@@ -515,8 +515,8 @@ export default function App() {
     setDaily(newDaily);
     setShowEdit(false);
     try {
-      window.storage.set("simple:anchors", JSON.stringify(newAnchors));
-      window.storage.set("simple:daily",   JSON.stringify(newDaily));
+      localStorage.setItem("simple:anchors", JSON.stringify(newAnchors));
+      localStorage.setItem("simple:daily",   JSON.stringify(newDaily));
     } catch {}
     persist(checked, newAnchors, newDaily);
   }
