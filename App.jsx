@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 // ─── 기본 데이터 ──────────────────────────────────────────────────
 const DEFAULT_ANCHORS = [
@@ -550,6 +550,84 @@ export default function App() {
     persist(checked, newAnchors, newDaily);
   }
 
+  // ── 데일리 항목 길게 눌러 순서 변경 ──
+  const pressRef = useRef(null);
+  const dragIdRef = useRef(null);
+  const justDraggedRef = useRef(false);
+  const [dragId, setDragId] = useState(null);
+
+  useEffect(() => {
+    function moveOver(clientX, clientY) {
+      const el = document.elementFromPoint(clientX, clientY);
+      const target = el && el.closest("[data-daily-id]");
+      const overId = target && target.getAttribute("data-daily-id");
+      if (overId && overId !== dragIdRef.current) {
+        setDaily(prev => {
+          const from = prev.findIndex(x => x.id === dragIdRef.current);
+          const to   = prev.findIndex(x => x.id === overId);
+          if (from === -1 || to === -1 || from === to) return prev;
+          const next = [...prev];
+          const [moved] = next.splice(from, 1);
+          next.splice(to, 0, moved);
+          return next;
+        });
+      }
+    }
+    function onTouchMove(e) {
+      const t = e.touches[0];
+      if (!t) return;
+      if (dragIdRef.current !== null) {
+        e.preventDefault();
+        moveOver(t.clientX, t.clientY);
+        return;
+      }
+      if (pressRef.current) {
+        const dx = Math.abs(t.clientX - pressRef.current.x);
+        const dy = Math.abs(t.clientY - pressRef.current.y);
+        if (dx > 10 || dy > 10) {
+          clearTimeout(pressRef.current.timer);
+          pressRef.current = null;
+        }
+      }
+    }
+    function endDrag() {
+      if (pressRef.current) { clearTimeout(pressRef.current.timer); pressRef.current = null; }
+      if (dragIdRef.current !== null) {
+        dragIdRef.current = null;
+        setDragId(null);
+        justDraggedRef.current = true;
+        setTimeout(() => { justDraggedRef.current = false; }, 400);
+        setDaily(prev => {
+          try { localStorage.setItem("simple:daily", JSON.stringify(prev)); } catch {}
+          return prev;
+        });
+      }
+    }
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+    document.addEventListener("touchend", endDrag);
+    document.addEventListener("touchcancel", endDrag);
+    return () => {
+      document.removeEventListener("touchmove", onTouchMove);
+      document.removeEventListener("touchend", endDrag);
+      document.removeEventListener("touchcancel", endDrag);
+    };
+  }, []);
+
+  function handleDailyTouchStart(e, id) {
+    const t = e.touches[0];
+    const timer = setTimeout(() => {
+      dragIdRef.current = id;
+      setDragId(id);
+      if (navigator.vibrate) navigator.vibrate(30);
+    }, 350);
+    pressRef.current = { x: t.clientX, y: t.clientY, timer };
+  }
+
+  function handleDailyClick(id) {
+    if (justDraggedRef.current) { justDraggedRef.current = false; return; }
+    toggle(id);
+  }
+
   const score = calcScore(checked, anchors, daily);
   const g = grade(score);
   const anchorDone = anchors.filter(a => checked[a.id]).length;
@@ -884,18 +962,36 @@ export default function App() {
 
             {/* DAILY 섹션 */}
             <div style={S.sectionLabel}>
-              <span>오늘 중 하면 되는 것들</span>
+              <span>
+                오늘 중 하면 되는 것들
+                <span style={{ color: "#b0b0b0", fontWeight: 400 }}> · 꾹 눌러 순서 변경</span>
+              </span>
               <span style={{ color: "#ff385c", fontWeight: 700 }}>{dailyDone} / {daily.length}</span>
             </div>
             <div style={S.dailyGrid}>
               {daily.map((item, i) => {
                 const done = !!checked[item.id];
+                const dragging = dragId === item.id;
+                const base = S.dailyItem(done);
                 return (
-                  <div key={item.id} style={{
-                    ...S.dailyItem(done),
-                    opacity: loaded ? 1 : 0,
-                    transition: `all 0.15s, opacity 0.4s ease ${i * 0.04}s`,
-                  }} onClick={() => toggle(item.id)}>
+                  <div
+                    key={item.id}
+                    data-daily-id={item.id}
+                    style={{
+                      ...base,
+                      opacity: dragging ? 0.95 : (loaded ? 1 : 0),
+                      transform: dragging ? "scale(1.05)" : "scale(1)",
+                      boxShadow: dragging ? "rgba(0,0,0,0.18) 0 8px 22px" : base.boxShadow,
+                      zIndex: dragging ? 10 : 1,
+                      pointerEvents: dragging ? "none" : "auto",
+                      userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none",
+                      transition: dragging
+                        ? "transform 0.12s, box-shadow 0.12s"
+                        : `all 0.15s, opacity 0.4s ease ${i * 0.04}s`,
+                    }}
+                    onClick={() => handleDailyClick(item.id)}
+                    onTouchStart={(e) => handleDailyTouchStart(e, item.id)}
+                  >
                     <span style={S.dailyEmoji}>{item.emoji}</span>
                     <span style={S.dailyLabel(done)}>{item.label}</span>
                     <div style={S.dailyCheck(done)}>
