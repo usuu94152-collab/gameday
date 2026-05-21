@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 // ─── 기본 데이터 ──────────────────────────────────────────────────
 const DEFAULT_ANCHORS = [
@@ -20,9 +20,17 @@ const DEFAULT_DAILY = [
   { id: "d10", label: "7시간+ 수면 (전날)",       emoji: "🌙" },
 ];
 
-function todayKey() {
-  const d = new Date();
+function dateKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+
+function todayKey() {
+  return dateKey(new Date());
+}
+
+function shiftDate(key, delta) {
+  const [y, m, d] = key.split("-").map(Number);
+  return dateKey(new Date(y, m-1, d + delta));
 }
 
 const KO_DAYS = ["일","월","화","수","목","금","토"];
@@ -52,7 +60,7 @@ function dayGrade(s) {
 }
 
 // ─── 월간 캘린더 리뷰 ─────────────────────────────────────────────
-function ReviewView({ history }) {
+function ReviewView({ history, onEditDate }) {
   const now = new Date();
   const [viewYear,  setViewYear]  = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
@@ -252,7 +260,7 @@ function ReviewView({ history }) {
       {selected && selectedScore !== undefined && (
         <div style={S.detailBox}>
           <div style={S.detailScore(dayGrade(selectedScore).color)}>{selectedScore}</div>
-          <div>
+          <div style={{ flex: 1 }}>
             <div style={S.detailLabel(dayGrade(selectedScore).color)}>
               {dayGrade(selectedScore).label} DAY
             </div>
@@ -261,6 +269,18 @@ function ReviewView({ history }) {
               {" "}({KO_DAYS[new Date(viewYear, viewMonth, selected).getDay()]}요일)
             </div>
           </div>
+          {selectedKey && selectedKey <= todayStr && (
+            <button
+              style={{
+                background: "#ff385c", border: "none", borderRadius: 9999,
+                color: "#ffffff", fontSize: 12, fontWeight: 600,
+                padding: "8px 14px", cursor: "pointer", flexShrink: 0,
+              }}
+              onClick={() => onEditDate(selectedKey)}
+            >
+              수정
+            </button>
+          )}
         </div>
       )}
 
@@ -474,6 +494,7 @@ function EditModal({ anchors, daily, onClose, onSave }) {
 // ─── 메인 앱 ─────────────────────────────────────────────────────
 export default function App() {
   const today = todayKey();
+  const [selectedDate, setSelectedDate] = useState(today);
   const [anchors, setAnchors] = useState(DEFAULT_ANCHORS);
   const [daily,   setDaily]   = useState(DEFAULT_DAILY);
   const [checked, setChecked] = useState({});
@@ -482,22 +503,30 @@ export default function App() {
   const [showEdit, setShowEdit] = useState(false);
   const [tab, setTab] = useState("today");
 
+  const isToday = selectedDate === today;
+
   useEffect(() => {
     async function load() {
       try { const r = localStorage.getItem("simple:anchors"); if (r) setAnchors(JSON.parse(r)); } catch {}
       try { const r = localStorage.getItem("simple:daily");   if (r) setDaily(JSON.parse(r)); }   catch {}
-      try { const r = localStorage.getItem(`simple:checked:${today}`); if (r) setChecked(JSON.parse(r)); } catch {}
       try { const r = localStorage.getItem("simple:history"); if (r) setHistory(JSON.parse(r)); } catch {}
       setTimeout(() => setLoaded(true), 80);
     }
     load();
   }, []);
 
+  useEffect(() => {
+    try {
+      const r = localStorage.getItem(`simple:checked:${selectedDate}`);
+      setChecked(r ? JSON.parse(r) : {});
+    } catch { setChecked({}); }
+  }, [selectedDate]);
+
   async function persist(newChecked, newAnchors = anchors, newDaily = daily) {
     try {
-      localStorage.setItem(`simple:checked:${today}`, JSON.stringify(newChecked));
+      localStorage.setItem(`simple:checked:${selectedDate}`, JSON.stringify(newChecked));
       const total = calcScore(newChecked, newAnchors, newDaily);
-      const hist = [...history.filter(h => h.date !== today), { date: today, total }]
+      const hist = [...history.filter(h => h.date !== selectedDate), { date: selectedDate, total }]
         .sort((a,b) => a.date.localeCompare(b.date));
       setHistory(hist);
       localStorage.setItem("simple:history", JSON.stringify(hist));
@@ -521,6 +550,84 @@ export default function App() {
     persist(checked, newAnchors, newDaily);
   }
 
+  // ── 데일리 항목 길게 눌러 순서 변경 ──
+  const pressRef = useRef(null);
+  const dragIdRef = useRef(null);
+  const justDraggedRef = useRef(false);
+  const [dragId, setDragId] = useState(null);
+
+  useEffect(() => {
+    function moveOver(clientX, clientY) {
+      const el = document.elementFromPoint(clientX, clientY);
+      const target = el && el.closest("[data-daily-id]");
+      const overId = target && target.getAttribute("data-daily-id");
+      if (overId && overId !== dragIdRef.current) {
+        setDaily(prev => {
+          const from = prev.findIndex(x => x.id === dragIdRef.current);
+          const to   = prev.findIndex(x => x.id === overId);
+          if (from === -1 || to === -1 || from === to) return prev;
+          const next = [...prev];
+          const [moved] = next.splice(from, 1);
+          next.splice(to, 0, moved);
+          return next;
+        });
+      }
+    }
+    function onTouchMove(e) {
+      const t = e.touches[0];
+      if (!t) return;
+      if (dragIdRef.current !== null) {
+        e.preventDefault();
+        moveOver(t.clientX, t.clientY);
+        return;
+      }
+      if (pressRef.current) {
+        const dx = Math.abs(t.clientX - pressRef.current.x);
+        const dy = Math.abs(t.clientY - pressRef.current.y);
+        if (dx > 10 || dy > 10) {
+          clearTimeout(pressRef.current.timer);
+          pressRef.current = null;
+        }
+      }
+    }
+    function endDrag() {
+      if (pressRef.current) { clearTimeout(pressRef.current.timer); pressRef.current = null; }
+      if (dragIdRef.current !== null) {
+        dragIdRef.current = null;
+        setDragId(null);
+        justDraggedRef.current = true;
+        setTimeout(() => { justDraggedRef.current = false; }, 400);
+        setDaily(prev => {
+          try { localStorage.setItem("simple:daily", JSON.stringify(prev)); } catch {}
+          return prev;
+        });
+      }
+    }
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+    document.addEventListener("touchend", endDrag);
+    document.addEventListener("touchcancel", endDrag);
+    return () => {
+      document.removeEventListener("touchmove", onTouchMove);
+      document.removeEventListener("touchend", endDrag);
+      document.removeEventListener("touchcancel", endDrag);
+    };
+  }, []);
+
+  function handleDailyTouchStart(e, id) {
+    const t = e.touches[0];
+    const timer = setTimeout(() => {
+      dragIdRef.current = id;
+      setDragId(id);
+      if (navigator.vibrate) navigator.vibrate(30);
+    }, 350);
+    pressRef.current = { x: t.clientX, y: t.clientY, timer };
+  }
+
+  function handleDailyClick(id) {
+    if (justDraggedRef.current) { justDraggedRef.current = false; return; }
+    toggle(id);
+  }
+
   const score = calcScore(checked, anchors, daily);
   const g = grade(score);
   const anchorDone = anchors.filter(a => checked[a.id]).length;
@@ -537,7 +644,7 @@ export default function App() {
   })();
 
   const todayLabel = (() => {
-    const [y,m,d] = today.split("-").map(Number);
+    const [y,m,d] = selectedDate.split("-").map(Number);
     return `${m}월 ${d}일 ${KO_DAYS[new Date(y,m-1,d).getDay()]}요일`;
   })();
 
@@ -562,6 +669,20 @@ export default function App() {
       display: "flex", justifyContent: "space-between", alignItems: "flex-start",
     },
     dateText: { fontSize: 12, color: "#6a6a6a", letterSpacing: 0.3, marginBottom: 2 },
+    dateRow: { display: "flex", alignItems: "center", gap: 6, marginBottom: 3 },
+    dateNav: (disabled) => ({
+      background: "#f7f7f7", border: "1px solid #ebebeb", borderRadius: 9999,
+      width: 22, height: 22, padding: 0,
+      color: "#6a6a6a", fontSize: 13, lineHeight: 1,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      cursor: disabled ? "default" : "pointer",
+      opacity: disabled ? 0.35 : 1,
+    }),
+    todayBtn: {
+      background: "#ff385c", border: "none", borderRadius: 9999,
+      color: "#ffffff", fontSize: 10, fontWeight: 600,
+      padding: "3px 9px", cursor: "pointer", marginLeft: 2,
+    },
     dayTitle: {
       fontSize: 22, fontWeight: 700,
       color: "#222222", lineHeight: 1.2,
@@ -723,7 +844,29 @@ export default function App() {
         {/* 상단 헤더 */}
         <div style={S.topBar}>
           <div>
-            <div style={S.dateText}>{todayLabel}</div>
+            {tab === "today" ? (
+              <div style={S.dateRow}>
+                <button
+                  style={S.dateNav(false)}
+                  onClick={() => setSelectedDate(d => shiftDate(d, -1))}
+                >‹</button>
+                <span style={S.dateText}>
+                  {todayLabel}{isToday ? " · 오늘" : ""}
+                </span>
+                <button
+                  style={S.dateNav(isToday)}
+                  disabled={isToday}
+                  onClick={() => !isToday && setSelectedDate(d => shiftDate(d, 1))}
+                >›</button>
+                {!isToday && (
+                  <button style={S.todayBtn} onClick={() => setSelectedDate(today)}>
+                    오늘로
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div style={S.dateText}>{todayLabel}</div>
+            )}
             <div style={S.dayTitle}>Everyday is Game Day</div>
           </div>
           {tab === "today" && (
@@ -766,7 +909,7 @@ export default function App() {
               <div style={S.histBar}>
                 {history.slice(-10).map((h) => {
                   const hg = grade(h.total);
-                  const isToday = h.date === today;
+                  const isCurrent = h.date === selectedDate;
                   return (
                     <div key={h.date} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
                       <div style={{
@@ -774,7 +917,7 @@ export default function App() {
                         height: `${Math.max(h.total * 0.28, 3)}px`,
                         background: hg.color,
                         borderRadius: "3px 3px 0 0",
-                        opacity: isToday ? 1 : 0.25,
+                        opacity: isCurrent ? 1 : 0.25,
                       }} />
                     </div>
                   );
@@ -819,18 +962,36 @@ export default function App() {
 
             {/* DAILY 섹션 */}
             <div style={S.sectionLabel}>
-              <span>오늘 중 하면 되는 것들</span>
+              <span>
+                오늘 중 하면 되는 것들
+                <span style={{ color: "#b0b0b0", fontWeight: 400 }}> · 꾹 눌러 순서 변경</span>
+              </span>
               <span style={{ color: "#ff385c", fontWeight: 700 }}>{dailyDone} / {daily.length}</span>
             </div>
             <div style={S.dailyGrid}>
               {daily.map((item, i) => {
                 const done = !!checked[item.id];
+                const dragging = dragId === item.id;
+                const base = S.dailyItem(done);
                 return (
-                  <div key={item.id} style={{
-                    ...S.dailyItem(done),
-                    opacity: loaded ? 1 : 0,
-                    transition: `all 0.15s, opacity 0.4s ease ${i * 0.04}s`,
-                  }} onClick={() => toggle(item.id)}>
+                  <div
+                    key={item.id}
+                    data-daily-id={item.id}
+                    style={{
+                      ...base,
+                      opacity: dragging ? 0.95 : (loaded ? 1 : 0),
+                      transform: dragging ? "scale(1.05)" : "scale(1)",
+                      boxShadow: dragging ? "rgba(0,0,0,0.18) 0 8px 22px" : base.boxShadow,
+                      zIndex: dragging ? 10 : 1,
+                      pointerEvents: dragging ? "none" : "auto",
+                      userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none",
+                      transition: dragging
+                        ? "transform 0.12s, box-shadow 0.12s"
+                        : `all 0.15s, opacity 0.4s ease ${i * 0.04}s`,
+                    }}
+                    onClick={() => handleDailyClick(item.id)}
+                    onTouchStart={(e) => handleDailyTouchStart(e, item.id)}
+                  >
                     <span style={S.dailyEmoji}>{item.emoji}</span>
                     <span style={S.dailyLabel(done)}>{item.label}</span>
                     <div style={S.dailyCheck(done)}>
@@ -858,7 +1019,12 @@ export default function App() {
         )}
 
         {/* ── REVIEW 탭 ── */}
-        {tab === "review" && <ReviewView history={history} />}
+        {tab === "review" && (
+          <ReviewView
+            history={history}
+            onEditDate={(key) => { setSelectedDate(key); setTab("today"); }}
+          />
+        )}
 
         {/* 하단 탭바 */}
         <div style={{
