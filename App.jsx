@@ -359,6 +359,57 @@ function EditModal({ anchors, daily, onClose, onSave }) {
     setNewLabel("");
   }
 
+  // ── 데일리 항목 드래그로 순서 변경 ──
+  const dragIdRef = useRef(null);
+  const [dragId, setDragId] = useState(null);
+
+  useEffect(() => {
+    function pointFrom(e) {
+      if (e.touches && e.touches[0]) return [e.touches[0].clientX, e.touches[0].clientY];
+      return [e.clientX, e.clientY];
+    }
+    function onMove(e) {
+      if (dragIdRef.current === null) return;
+      if (e.cancelable) e.preventDefault();
+      const [x, y] = pointFrom(e);
+      const el = document.elementFromPoint(x, y);
+      const target = el && el.closest("[data-edit-id]");
+      const overId = target && target.getAttribute("data-edit-id");
+      if (overId && overId !== dragIdRef.current) {
+        setEditDaily(prev => {
+          const from = prev.findIndex(x => x.id === dragIdRef.current);
+          const to   = prev.findIndex(x => x.id === overId);
+          if (from === -1 || to === -1 || from === to) return prev;
+          const next = [...prev];
+          const [moved] = next.splice(from, 1);
+          next.splice(to, 0, moved);
+          return next;
+        });
+      }
+    }
+    function onUp() {
+      if (dragIdRef.current !== null) { dragIdRef.current = null; setDragId(null); }
+    }
+    document.addEventListener("touchmove", onMove, { passive: false });
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("touchend", onUp);
+    document.addEventListener("mouseup", onUp);
+    document.addEventListener("touchcancel", onUp);
+    return () => {
+      document.removeEventListener("touchmove", onMove);
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("touchend", onUp);
+      document.removeEventListener("mouseup", onUp);
+      document.removeEventListener("touchcancel", onUp);
+    };
+  }, []);
+
+  function startDrag(id) {
+    dragIdRef.current = id;
+    setDragId(id);
+    if (navigator.vibrate) navigator.vibrate(20);
+  }
+
   const S = {
     overlay: {
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
@@ -404,6 +455,13 @@ function EditModal({ anchors, daily, onClose, onSave }) {
       color: "#6a6a6a", fontSize: 11, outline: "none",
     },
     removeBtn: { background: "none", border: "none", color: "#b0b0b0", cursor: "pointer", fontSize: 16 },
+    dragHandle: {
+      fontSize: 16, color: "#b0b0b0", cursor: "grab",
+      width: 24, textAlign: "center", flexShrink: 0,
+      lineHeight: 1, letterSpacing: -2,
+      touchAction: "none", userSelect: "none", WebkitUserSelect: "none",
+      WebkitTouchCallout: "none",
+    },
     addRow: { display: "flex", gap: 8, marginTop: 12, alignItems: "center" },
     addInp: {
       flex: 1, background: "#f7f7f7", border: "1px solid #dddddd",
@@ -464,14 +522,33 @@ function EditModal({ anchors, daily, onClose, onSave }) {
           )}
           {tab === "daily" && (
             <>
-              <div style={S.hintText}>언제 해도 되는 항목들. 자유롭게 추가·삭제.</div>
-              {editDaily.map(d => (
-                <div key={d.id} style={S.row}>
-                  <span style={{ fontSize: 16, width: 26 }}>{d.emoji}</span>
-                  <input value={d.label} onChange={e => updateDailyLabel(d.id, e.target.value)} style={S.inp} />
-                  <button onClick={() => removeDaily(d.id)} style={S.removeBtn}>✕</button>
-                </div>
-              ))}
+              <div style={S.hintText}>언제 해도 되는 항목들. 자유롭게 추가·삭제하고, 왼쪽 손잡이를 끌어 순서를 바꿔.</div>
+              {editDaily.map(d => {
+                const dragging = dragId === d.id;
+                return (
+                  <div
+                    key={d.id}
+                    data-edit-id={d.id}
+                    style={{
+                      ...S.row,
+                      background: dragging ? "#ffffff" : S.row.background,
+                      boxShadow: dragging ? "rgba(0,0,0,0.18) 0 6px 18px" : "none",
+                      opacity: dragging ? 0.95 : 1,
+                      pointerEvents: dragging ? "none" : "auto",
+                      transition: "box-shadow 0.12s",
+                    }}
+                  >
+                    <span
+                      style={S.dragHandle}
+                      onTouchStart={() => startDrag(d.id)}
+                      onMouseDown={e => { e.preventDefault(); startDrag(d.id); }}
+                    >⠿</span>
+                    <span style={{ fontSize: 16, width: 26 }}>{d.emoji}</span>
+                    <input value={d.label} onChange={e => updateDailyLabel(d.id, e.target.value)} style={S.inp} />
+                    <button onClick={() => removeDaily(d.id)} style={S.removeBtn}>✕</button>
+                  </div>
+                );
+              })}
               <div style={S.addRow}>
                 <input value={newEmoji} onChange={e => setNewEmoji(e.target.value)} style={S.emojiInp} placeholder="😀" />
                 <input value={newLabel} onChange={e => setNewLabel(e.target.value)}
@@ -548,84 +625,6 @@ export default function App() {
       localStorage.setItem("simple:daily",   JSON.stringify(newDaily));
     } catch {}
     persist(checked, newAnchors, newDaily);
-  }
-
-  // ── 데일리 항목 길게 눌러 순서 변경 ──
-  const pressRef = useRef(null);
-  const dragIdRef = useRef(null);
-  const justDraggedRef = useRef(false);
-  const [dragId, setDragId] = useState(null);
-
-  useEffect(() => {
-    function moveOver(clientX, clientY) {
-      const el = document.elementFromPoint(clientX, clientY);
-      const target = el && el.closest("[data-daily-id]");
-      const overId = target && target.getAttribute("data-daily-id");
-      if (overId && overId !== dragIdRef.current) {
-        setDaily(prev => {
-          const from = prev.findIndex(x => x.id === dragIdRef.current);
-          const to   = prev.findIndex(x => x.id === overId);
-          if (from === -1 || to === -1 || from === to) return prev;
-          const next = [...prev];
-          const [moved] = next.splice(from, 1);
-          next.splice(to, 0, moved);
-          return next;
-        });
-      }
-    }
-    function onTouchMove(e) {
-      const t = e.touches[0];
-      if (!t) return;
-      if (dragIdRef.current !== null) {
-        e.preventDefault();
-        moveOver(t.clientX, t.clientY);
-        return;
-      }
-      if (pressRef.current) {
-        const dx = Math.abs(t.clientX - pressRef.current.x);
-        const dy = Math.abs(t.clientY - pressRef.current.y);
-        if (dx > 10 || dy > 10) {
-          clearTimeout(pressRef.current.timer);
-          pressRef.current = null;
-        }
-      }
-    }
-    function endDrag() {
-      if (pressRef.current) { clearTimeout(pressRef.current.timer); pressRef.current = null; }
-      if (dragIdRef.current !== null) {
-        dragIdRef.current = null;
-        setDragId(null);
-        justDraggedRef.current = true;
-        setTimeout(() => { justDraggedRef.current = false; }, 400);
-        setDaily(prev => {
-          try { localStorage.setItem("simple:daily", JSON.stringify(prev)); } catch {}
-          return prev;
-        });
-      }
-    }
-    document.addEventListener("touchmove", onTouchMove, { passive: false });
-    document.addEventListener("touchend", endDrag);
-    document.addEventListener("touchcancel", endDrag);
-    return () => {
-      document.removeEventListener("touchmove", onTouchMove);
-      document.removeEventListener("touchend", endDrag);
-      document.removeEventListener("touchcancel", endDrag);
-    };
-  }, []);
-
-  function handleDailyTouchStart(e, id) {
-    const t = e.touches[0];
-    const timer = setTimeout(() => {
-      dragIdRef.current = id;
-      setDragId(id);
-      if (navigator.vibrate) navigator.vibrate(30);
-    }, 350);
-    pressRef.current = { x: t.clientX, y: t.clientY, timer };
-  }
-
-  function handleDailyClick(id) {
-    if (justDraggedRef.current) { justDraggedRef.current = false; return; }
-    toggle(id);
   }
 
   const score = calcScore(checked, anchors, daily);
@@ -962,36 +961,18 @@ export default function App() {
 
             {/* DAILY 섹션 */}
             <div style={S.sectionLabel}>
-              <span>
-                오늘 중 하면 되는 것들
-                <span style={{ color: "#b0b0b0", fontWeight: 400 }}> · 꾹 눌러 순서 변경</span>
-              </span>
+              <span>오늘 중 하면 되는 것들</span>
               <span style={{ color: "#ff385c", fontWeight: 700 }}>{dailyDone} / {daily.length}</span>
             </div>
             <div style={S.dailyGrid}>
               {daily.map((item, i) => {
                 const done = !!checked[item.id];
-                const dragging = dragId === item.id;
-                const base = S.dailyItem(done);
                 return (
-                  <div
-                    key={item.id}
-                    data-daily-id={item.id}
-                    style={{
-                      ...base,
-                      opacity: dragging ? 0.95 : (loaded ? 1 : 0),
-                      transform: dragging ? "scale(1.05)" : "scale(1)",
-                      boxShadow: dragging ? "rgba(0,0,0,0.18) 0 8px 22px" : base.boxShadow,
-                      zIndex: dragging ? 10 : 1,
-                      pointerEvents: dragging ? "none" : "auto",
-                      userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none",
-                      transition: dragging
-                        ? "transform 0.12s, box-shadow 0.12s"
-                        : `all 0.15s, opacity 0.4s ease ${i * 0.04}s`,
-                    }}
-                    onClick={() => handleDailyClick(item.id)}
-                    onTouchStart={(e) => handleDailyTouchStart(e, item.id)}
-                  >
+                  <div key={item.id} style={{
+                    ...S.dailyItem(done),
+                    opacity: loaded ? 1 : 0,
+                    transition: `all 0.15s, opacity 0.4s ease ${i * 0.04}s`,
+                  }} onClick={() => toggle(item.id)}>
                     <span style={S.dailyEmoji}>{item.emoji}</span>
                     <span style={S.dailyLabel(done)}>{item.label}</span>
                     <div style={S.dailyCheck(done)}>
