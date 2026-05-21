@@ -471,9 +471,16 @@ function EditModal({ anchors, daily, onClose, onSave }) {
   );
 }
 
+function offsetDate(base, days) {
+  const d = new Date(base + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+
 // ─── 메인 앱 ─────────────────────────────────────────────────────
 export default function App() {
   const today = todayKey();
+  const [activeDate, setActiveDate] = useState(today);
   const [anchors, setAnchors] = useState(DEFAULT_ANCHORS);
   const [daily,   setDaily]   = useState(DEFAULT_DAILY);
   const [checked, setChecked] = useState({});
@@ -486,22 +493,29 @@ export default function App() {
     async function load() {
       try { const r = localStorage.getItem("simple:anchors"); if (r) setAnchors(JSON.parse(r)); } catch {}
       try { const r = localStorage.getItem("simple:daily");   if (r) setDaily(JSON.parse(r)); }   catch {}
-      try { const r = localStorage.getItem(`simple:checked:${today}`); if (r) setChecked(JSON.parse(r)); } catch {}
+      try { const r = localStorage.getItem(`simple:checked:${activeDate}`); if (r) setChecked(JSON.parse(r)); else setChecked({}); } catch {}
       try { const r = localStorage.getItem("simple:history"); if (r) setHistory(JSON.parse(r)); } catch {}
       setTimeout(() => setLoaded(true), 80);
     }
     load();
-  }, []);
+  }, [activeDate]);
 
   async function persist(newChecked, newAnchors = anchors, newDaily = daily) {
     try {
-      localStorage.setItem(`simple:checked:${today}`, JSON.stringify(newChecked));
+      localStorage.setItem(`simple:checked:${activeDate}`, JSON.stringify(newChecked));
       const total = calcScore(newChecked, newAnchors, newDaily);
-      const hist = [...history.filter(h => h.date !== today), { date: today, total }]
+      const hist = [...history.filter(h => h.date !== activeDate), { date: activeDate, total }]
         .sort((a,b) => a.date.localeCompare(b.date));
       setHistory(hist);
       localStorage.setItem("simple:history", JSON.stringify(hist));
     } catch {}
+  }
+
+  function goDate(delta) {
+    const next = offsetDate(activeDate, delta);
+    if (next > today) return;
+    setLoaded(false);
+    setActiveDate(next);
   }
 
   function toggle(id) {
@@ -536,8 +550,10 @@ export default function App() {
     return s;
   })();
 
-  const todayLabel = (() => {
-    const [y,m,d] = today.split("-").map(Number);
+  const isToday = activeDate === today;
+
+  const activeDateLabel = (() => {
+    const [y,m,d] = activeDate.split("-").map(Number);
     return `${m}월 ${d}일 ${KO_DAYS[new Date(y,m-1,d).getDay()]}요일`;
   })();
 
@@ -722,8 +738,25 @@ export default function App() {
 
         {/* 상단 헤더 */}
         <div style={S.topBar}>
-          <div>
-            <div style={S.dateText}>{todayLabel}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+              {tab === "today" && (
+                <button
+                  onClick={() => goDate(-1)}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "#9b9b9b", fontSize: 16, padding: "0 2px", lineHeight: 1 }}
+                >‹</button>
+              )}
+              <div style={{ ...S.dateText, margin: 0 }}>
+                {activeDateLabel}
+                {!isToday && <span style={{ marginLeft: 6, fontSize: 10, color: "#ff385c", fontWeight: 600 }}>전날</span>}
+              </div>
+              {tab === "today" && !isToday && (
+                <button
+                  onClick={() => goDate(1)}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "#9b9b9b", fontSize: 16, padding: "0 2px", lineHeight: 1 }}
+                >›</button>
+              )}
+            </div>
             <div style={S.dayTitle}>Everyday is Game Day</div>
           </div>
           {tab === "today" && (
